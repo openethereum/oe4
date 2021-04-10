@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 
 [package]
-name = "oe4-runtime"
+name = "runtime"
 version = "4.0.0-alpha"
 description = "Distributed actors runtime for OpenEthereum"
 authors = ["Karim Agha <karim.dev@gmail.com>"]

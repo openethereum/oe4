@@ -20,7 +20,7 @@ mod tests {
 
   use auction::TransactionsAuction;
   use ethereum::{Transaction, U256};
-  use oe4_runtime::{receive, send};
+  use runtime::{receive, send};
 
   #[tokio::test(flavor = "multi_thread")]
   async fn transaction_auction_io() {

@@ -16,7 +16,7 @@ execution = { path = "../execution" }
 networking = { path = "../networking" }
 storage = { path = "../storage" }
 consensus = { path = "../consensus" }
-oe4-runtime = { path = "../runtime" }
+runtime = { path = "../runtime" }
 
 tokio = { version = "1.3", features = ["full"] }
 clap = { git = "https://github.com/clap-rs/clap/" }

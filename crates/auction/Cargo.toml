@@ -12,5 +12,5 @@ description = "This crate implements algorithms that select transactions that ar
 
 [dependencies]
 ethereum = { path = "../core" }
-oe4-runtime = { path = "../runtime" }
+runtime = { path = "../runtime" }
 async-trait = "0.1.48"

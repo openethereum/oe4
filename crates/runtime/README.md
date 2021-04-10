@@ -53,7 +53,7 @@ mod tests {
 
   use auction::TransactionsAuction;
   use ethereum::{Transaction, U256};
-  use oe4_runtime::{receive, send};
+  use runtime::{receive, send};
 
   #[tokio::test(flavor = "multi_thread")]
   async fn transaction_auction_io() {
@@ -117,7 +117,7 @@ The implementation of a transaction pool/auction in this model looks like this:
 ```rust
 use async_trait::async_trait;
 use ethereum::Transaction;
-use oe4_runtime::buffers;
+use runtime::buffers;
 
 pub type BlockProposal = Vec<Transaction>;
 
@@ -146,19 +146,19 @@ impl TransactionsAuction {
 
 #[async_trait]
 impl buffers::Target<Transaction> for TransactionsAuction {
-  async fn accept(&self, message: oe4_runtime::Message<Transaction>) -> oe4_runtime::MessageStatus {
+  async fn accept(&self, message: runtime::Message<Transaction>) -> runtime::MessageStatus {
     self.incoming_tx.accept(message).await
   }
 }
 
 #[async_trait]
 impl buffers::Source<BlockProposal> for TransactionsAuction {
-  fn try_consume(&self) -> Option<oe4_runtime::Message<BlockProposal>> {
+  fn try_consume(&self) -> Option<runtime::Message<BlockProposal>> {
     None
   }
 
   /// Aggregate transactions until 3 txs are available and then return them as one proposal
-  async fn consume(&self) -> buffers::Result<oe4_runtime::Message<BlockProposal>> {
+  async fn consume(&self) -> buffers::Result<runtime::Message<BlockProposal>> {
     let mut txs = Vec::with_capacity(3);
     while txs.len() != 3 {
       txs.push(self.incoming_tx.consume().await?.release());
