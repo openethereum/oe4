@@ -6,9 +6,16 @@ mod config;
 pub use config::Config;
 
 use ethereum::{Block, Transaction};
-use futures::future::{abortable, AbortHandle, Abortable};
 use runtime::{async_trait, Message, Result, Source, Target, UnboundedBuffer};
-use std::{sync::Arc, time::Duration};
+use std::{
+  future::Future,
+  sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, RwLock,
+  },
+  task::{Poll, Waker},
+  time::Duration,
+};
 use tokio::{task::JoinHandle, time::sleep};
 
 /// Implements ethereum devp2p networking
@@ -20,8 +27,9 @@ use tokio::{task::JoinHandle, time::sleep};
 #[derive(Clone)]
 pub struct NetworkInterface {
   inner: Arc<NetworkInterfaceInner>,
-  worker: Arc<Abortable<JoinHandle<()>>>,
-  abort_handle: AbortHandle,
+  worker: Arc<JoinHandle<()>>,
+  aborted: Arc<AtomicBool>,
+  waker: Arc<RwLock<Option<Waker>>>,
 }
 
 struct NetworkInterfaceInner {
@@ -63,33 +71,51 @@ impl NetworkInterface {
       out_blocks: UnboundedBuffer::new(),
     });
 
-    let (abortable_worker, abort_handle) =
-      abortable(tokio::spawn(NetworkInterface::runloop(inner.clone())));
-
     Ok(NetworkInterface {
       inner: inner.clone(),
-      worker: Arc::new(abortable_worker),
-      abort_handle: abort_handle,
+      worker: Arc::new(tokio::spawn(NetworkInterface::runloop(inner.clone()))),
+      aborted: Arc::new(AtomicBool::new(false)),
+      waker: Arc::new(RwLock::new(None)),
     })
   }
 
   pub async fn shutdown(mut self) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    self.abort_handle.abort();
-    Ok(Arc::get_mut(&mut self.worker).unwrap().await??)
+    if !self.aborted.load(Ordering::Relaxed) {
+      self.worker.abort();
+      if let Some(worker) = Arc::get_mut(&mut self.worker) {
+        worker.await?;
+      }
+      if let Some(ref waker) = *self.waker.read().unwrap() {
+        waker.wake_by_ref();
+      }
+      self.aborted.store(true, Ordering::SeqCst);
+    }
+    Ok(())
   }
 
+  // simulate txs coming from the network for now
   async fn runloop(network_interface: Arc<NetworkInterfaceInner>) {
     loop {
       sleep(Duration::from_secs(3)).await;
-      // simulate txs coming from the network for now
       runtime::send(&network_interface.in_txs, Transaction::default()).await;
     }
   }
 }
 
-impl Drop for NetworkInterface {
-  fn drop(&mut self) {
-    self.abort_handle.abort();
+impl Future for NetworkInterface {
+  type Output = ();
+
+  fn poll(
+    self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<Self::Output> {
+    match self.aborted.load(Ordering::Relaxed) {
+      true => Poll::Ready(()),
+      false => {
+        *self.get_mut().waker.write().unwrap() = Some(cx.waker().clone());
+        Poll::Pending
+      }
+    }
   }
 }
 
