@@ -24,7 +24,7 @@ use tokio::{task::JoinHandle, time::sleep};
 ///
 /// This type is exposed as an async target, it allows polling
 /// for new work through [receive()].
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct NetworkInterface {
   inner: Arc<NetworkInterfaceInner>,
   worker: Arc<JoinHandle<()>>,
@@ -79,7 +79,7 @@ impl NetworkInterface {
     })
   }
 
-  pub async fn shutdown(mut self) -> std::result::Result<(), Box<dyn std::error::Error>> {
+  pub async fn abort(mut self) -> std::result::Result<(), Box<dyn std::error::Error>> {
     if !self.aborted.load(Ordering::Relaxed) {
       self.worker.abort();
       if let Some(worker) = Arc::get_mut(&mut self.worker) {
@@ -116,6 +116,12 @@ impl Future for NetworkInterface {
         Poll::Pending
       }
     }
+  }
+}
+
+impl Drop for NetworkInterface {
+  fn drop(&mut self) {
+    futures::executor::block_on(self)
   }
 }
 

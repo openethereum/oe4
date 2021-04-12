@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
       tokio::time::sleep(Duration::from_secs(6)).await;
       println!("network shutdown requested");
-      net3.shutdown().await.unwrap();
+      net3.abort().await.unwrap();
     });
   }
 
