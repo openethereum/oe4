@@ -6,7 +6,7 @@ mod config;
 pub use config::Config;
 
 use ethereum::{Block, Transaction};
-use runtime::{async_trait, Message, Result, Source, Target, UnboundedBuffer};
+use runtime::{agent::Runloop, async_trait, Message, Result, Source, Target, UnboundedBuffer};
 use std::{
   future::Future,
   sync::{
@@ -24,7 +24,7 @@ use tokio::{task::JoinHandle, time::sleep};
 ///
 /// This type is exposed as an async target, it allows polling
 /// for new work through [receive()].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NetworkInterface {
   inner: Arc<NetworkInterfaceInner>,
   worker: Arc<JoinHandle<()>>,
@@ -99,6 +99,17 @@ impl NetworkInterface {
       sleep(Duration::from_secs(3)).await;
       runtime::send(&network_interface.in_txs, Transaction::default()).await;
     }
+  }
+}
+
+#[async_trait]
+impl Runloop for NetworkInterface {
+  async fn step(self: Arc<Self>) {
+    todo!()
+  }
+
+  async fn teardown() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    todo!()
   }
 }
 

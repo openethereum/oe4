@@ -4,8 +4,13 @@
 mod local;
 mod remote;
 
-use async_std::task::{self, JoinHandle};
+use async_std::{
+  sync::{Condvar, Mutex},
+  task::{self, JoinHandle},
+};
+use async_trait::async_trait;
 use std::{
+  error::Error,
   future::Future,
   ops::Deref,
   sync::{
@@ -15,8 +20,10 @@ use std::{
   task::{Poll, Waker},
 };
 
-pub trait Runloop: Send + Sync {
-  fn step(self: Arc<Self>);
+#[async_trait]
+pub trait Runloop: Send + Sync + Sized {
+  async fn step(self: Arc<Self>);
+  async fn teardown() -> Result<(), Box<dyn Error>>;
 }
 
 pub struct Agent<Impl>
@@ -24,7 +31,7 @@ where
   Impl: Runloop,
 {
   inner: Arc<Impl>,
-  worker: RwLock<Option<JoinHandle<()>>>,
+  worker: JoinHandle<()>,
   aborted: AtomicBool,
   waker: RwLock<Option<Waker>>,
 }
@@ -34,12 +41,24 @@ where
   Impl: Runloop,
 {
   pub async fn new(instance: Impl) -> Result<Self, Box<dyn std::error::Error>> {
+    let var = Arc::new(Condvar::new());
+    
+    let var_clone = var.clone();
     let inner = Arc::new(instance);
+
+    let worker = task::spawn(async move {
+      let second = inner.clone();
+      var_clone.notify_one();
+      
+      // start inner runloop (omitted)
+    });
+
+    let lock = Mutex::new(false);
+    var.wait(lock.lock().await).await;
+
     Ok(Agent {
       inner: inner.clone(),
-      worker: RwLock::new(Some(task::spawn(async move {
-        inner.clone();
-      }))),
+      worker: worker,
       aborted: AtomicBool::new(false),
       waker: RwLock::new(None),
     })
@@ -47,9 +66,7 @@ where
 
   pub async fn abort(self) -> std::result::Result<(), Box<dyn std::error::Error>> {
     if !self.aborted.load(Ordering::Relaxed) {
-      if let Some(worker) = self.worker.write().unwrap().take() {
-        worker.cancel().await;
-      }
+      self.worker.cancel().await;
       if let Some(ref waker) = *self.waker.read().unwrap() {
         waker.wake_by_ref();
       }
@@ -90,11 +107,11 @@ where
   }
 }
 
-impl<Impl> Drop for Agent<Impl>
-where
-  Impl: Runloop,
-{
-  fn drop(&mut self) {
-    async_std::task::block_on(self);
-  }
-}
+// impl<Impl> Drop for Agent<Impl>
+// where
+//   Impl: Runloop,
+// {
+//   fn drop(&mut self) {
+//     async_std::task::block_on(self);
+//   }
+// }

@@ -8,13 +8,25 @@ use std::time::Duration;
 use ethereum::Transaction;
 use networking::{Config, NetworkInterface};
 use runtime::{
+  agent::Agent,
   nodes::ipc::{expose, ingest},
   receive,
 };
 
+async fn test() -> Result<(), Box<dyn std::error::Error>> {
+  let network = Agent::new(NetworkInterface::new(Config::default()).await?).await?;
+
+  runtime::send(&*network, Transaction::default()).await;
+
+  network.await;
+
+  Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
   // Create an instance of the networking interface
+  test().await?;
   let network = NetworkInterface::new(Config::default()).await?;
 
   {
