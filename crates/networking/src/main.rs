@@ -13,30 +13,19 @@ use runtime::{
   receive,
 };
 
-async fn test() -> Result<(), Box<dyn std::error::Error>> {
-  let network = Agent::new(NetworkInterface::new(Config::default()).await?).await?;
-
-  runtime::send(&*network, Transaction::default()).await;
-
-  network.await;
-
-  Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
   // Create an instance of the networking interface
-  test().await?;
-  let network = NetworkInterface::new(Config::default()).await?;
+  let network = Agent::new(NetworkInterface::new(Config::default()).await?).await?;
 
   {
-    // forward all transactions of type Transactionwere produced by local client
+    // forward all transactions of type Transaction were produced by local client
     // components to a unix socket and send them to the p2p network.
-    let _tx_from_client_to_world = ingest::<Transaction>(&network, "/var/run/oe4/net.ipc");
+    let _tx_from_client_to_world = ingest::<Transaction>(&*network, "/var/run/oe4/net.ipc");
 
     // forward all produced messages of type Transaction arriving from the p2p network
     // to a unix socket for consumption by local client components
-    let _tx_from_world_to_client = expose::<Transaction>(&network, "/var/run/oe4/net.ipc");
+    let _tx_from_world_to_client = expose::<Transaction>(&*network, "/var/run/oe4/net.ipc");
 
     let net1 = network.clone();
     tokio::spawn(async move {
@@ -48,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let net2 = network.clone();
     tokio::spawn(async move {
-      while let Ok(tx) = receive::<Transaction>(&net2).await {
+      while let Ok(tx) = receive::<Transaction>(&*net2).await {
         println!("received transaction from devp2p: {:?}", tx);
         //send(&tx_from_world_to_client, tx).await; // continue here tomorrow
       }
@@ -58,10 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
       tokio::time::sleep(Duration::from_secs(6)).await;
       println!("network shutdown requested");
-      net3.abort().await.unwrap();
+      net3.abort().await;
     });
   }
-
+  
   network.await;
   Ok(())
 }

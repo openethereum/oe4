@@ -4,36 +4,51 @@
 mod local;
 mod remote;
 
-use async_std::{
-  sync::{Condvar, Mutex},
-  task::{self, JoinHandle},
-};
 use async_trait::async_trait;
 use std::{
-  error::Error,
-  future::Future,
-  ops::Deref,
   sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, RwLock,
+    Arc,
   },
-  task::{Poll, Waker},
+  time::Duration,
+};
+use tokio::{
+  task::{self, JoinHandle},
+  time,
 };
 
-#[async_trait]
-pub trait Runloop: Send + Sync + Sized {
-  async fn step(self: Arc<Self>);
-  async fn teardown() -> Result<(), Box<dyn Error>>;
+/// Specifies the amount of time the agent runtime needs to wait
+/// before invoking the next step of the runloop
+pub enum Repeat {
+  Auto,
+  Never,
+  After(Duration),
 }
 
+#[async_trait]
+pub trait Runloop: Send + Sync + Sized + Clone + 'static {
+  /// Gets invoked in a loop for the duration of the lifetime of the
+  /// agent until it is aborted or returns
+  async fn step(&self) -> Repeat {
+    Repeat::Never
+  }
+
+  /// Optional setup code that is executed once before the first step
+  /// of the runloop is invoked
+  async fn setup(&self) {}
+
+  /// Optional cleanup code that runs once when an abort is requested.
+  async fn teardown(&self) {}
+}
+
+#[derive(Clone)]
 pub struct Agent<Impl>
 where
   Impl: Runloop,
 {
   inner: Arc<Impl>,
-  worker: JoinHandle<()>,
-  aborted: AtomicBool,
-  waker: RwLock<Option<Waker>>,
+  worker: Arc<JoinHandle<()>>,
+  aborted: Arc<AtomicBool>,
 }
 
 impl<Impl> Agent<Impl>
@@ -41,42 +56,39 @@ where
   Impl: Runloop,
 {
   pub async fn new(instance: Impl) -> Result<Self, Box<dyn std::error::Error>> {
-    let var = Arc::new(Condvar::new());
-    
-    let var_clone = var.clone();
     let inner = Arc::new(instance);
+    let aborted = Arc::new(AtomicBool::new(false));
 
-    let worker = task::spawn(async move {
-      let second = inner.clone();
-      var_clone.notify_one();
-      
-      // start inner runloop (omitted)
-    });
-
-    let lock = Mutex::new(false);
-    var.wait(lock.lock().await).await;
+    let inner_worker = inner.clone();
+    let aborted_worker = aborted.clone();
+    let worker = Arc::new(task::spawn(async move {
+      inner_worker.setup().await;
+      while !aborted_worker.load(Ordering::SeqCst) {
+        match inner_worker.step().await {
+          Repeat::Never => break,
+          Repeat::Auto => task::yield_now().await,
+          Repeat::After(duration) => time::sleep(duration).await,
+        }
+      }
+    }));
 
     Ok(Agent {
       inner: inner.clone(),
       worker: worker,
-      aborted: AtomicBool::new(false),
-      waker: RwLock::new(None),
+      aborted: aborted,
     })
   }
 
-  pub async fn abort(self) -> std::result::Result<(), Box<dyn std::error::Error>> {
+  pub async fn abort(self) {
     if !self.aborted.load(Ordering::Relaxed) {
-      self.worker.cancel().await;
-      if let Some(ref waker) = *self.waker.read().unwrap() {
-        waker.wake_by_ref();
-      }
+      self.inner.teardown().await;
       self.aborted.store(true, Ordering::SeqCst);
+      self.worker.abort();
     }
-    Ok(())
   }
 }
 
-impl<Impl> Deref for Agent<Impl>
+impl<Impl> std::ops::Deref for Agent<Impl>
 where
   Impl: Runloop + Send + Sync,
 {
@@ -87,7 +99,7 @@ where
   }
 }
 
-impl<Impl> Future for Agent<Impl>
+impl<Impl> std::future::Future for Agent<Impl>
 where
   Impl: Runloop,
 {
@@ -98,20 +110,11 @@ where
     cx: &mut std::task::Context<'_>,
   ) -> std::task::Poll<Self::Output> {
     match self.aborted.load(Ordering::Relaxed) {
-      true => Poll::Ready(()),
+      true => std::task::Poll::Ready(()),
       false => {
-        *self.get_mut().waker.write().unwrap() = Some(cx.waker().clone());
-        Poll::Pending
+        cx.waker().wake_by_ref();
+        std::task::Poll::Pending
       }
     }
   }
 }
-
-// impl<Impl> Drop for Agent<Impl>
-// where
-//   Impl: Runloop,
-// {
-//   fn drop(&mut self) {
-//     async_std::task::block_on(self);
-//   }
-// }
